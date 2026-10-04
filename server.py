@@ -251,6 +251,6 @@ class Handler(BaseHTTPRequestHandler):
 if __name__=='__main__':
     initialize()
     threading.Thread(target=market_loop,daemon=True).start()
-    port=int(os.environ.get('PORT','8000'))
+    port=int(os.environ.get('PORT','8088'))
     print(f'Orbit Exchange running at http://localhost:{port}',flush=True)
-    ThreadingHTTPServer((os.environ.get('HOST','0.0.0.0'),port),Handler).serve_forever()
+    ThreadingHTTPServer((os.environ.get('HOST','127.0.0.1'),port),Handler).serve_forever()
