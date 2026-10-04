@@ -3,11 +3,19 @@
  'use strict';
  const companies=[['NOVA','星河科技','科技',12800],['AERO','蒼穹航空','運輸',7650],['LUME','流明能源','能源',9420],['MINT','薄荷生活','消費',4860],['ORBI','環宇通訊','通訊',21500],['TIDE','潮汐金融','金融',6340]];
  const int=(v,min=0,max=Number.MAX_SAFE_INTEGER)=>Number.isSafeInteger(v)&&v>=min&&v<=max;
- function fresh(now=Date.now()){
+ const profiles={NOVA:.006,AERO:.004,LUME:.008,MINT:.0025,ORBI:.0055,TIDE:.003};
+ const bounded=p=>Math.max(100,Math.min(100000000,Math.round(p)));
+ function regime(symbol,random){return {drift:(random()*2-1)*profiles[symbol]*.22,scale:.6+random()*1.2,remaining:15+Math.floor(random()*66)};}
+ function history(symbol,price,minute,random){
+   // Walk backwards from the real starting quote: no shared sine wave or final jump.
+   const candles=[];let close=price;
+   for(let i=89;i>=0;i--){const open=bounded(close/(1+(random()*2-1)*profiles[symbol]*3));const wick=profiles[symbol]*(.1+random()*.8);candles.unshift({ts:minute-(89-i)*60,open,high:bounded(Math.max(open,close)*(1+wick)),low:bounded(Math.min(open,close)*(1-wick)),close});close=open;}
+   return candles;
+ }
+ function fresh(now=Date.now(),random=Math.random){
    const minute=Math.floor(now/60000)*60;
    return {version:1,lastTick:now,nextId:1,user:{name:'單機交易者',cash:100000000},positions:[],orders:[],watchlist:[],stocks:companies.map(([symbol,name,sector,price])=>{
-     let previous=price;
-     const candles=Array.from({length:90},(_,i)=>{const close=i===89?price:Math.round(price*(1+.015*Math.sin(i/9)+.008*Math.sin(i/3)));const c={ts:minute-(89-i)*60,open:previous,high:Math.max(previous,close)+30,low:Math.min(previous,close)-30,close};previous=close;return c;});
+     const candles=history(symbol,price,minute,random);
      return {symbol,name,sector,price,opening:price,volume:0,candles};
    })};
  }
@@ -34,7 +42,13 @@
    if(now-s.lastTick<3000)return;
    s.lastTick=now;
    for(const stock of s.stocks){
-     const before=stock.price;stock.price=Math.max(100,Math.min(100000000,Math.round(before*(1+(Math.floor(random()*101)-50)/20000))));
+     if(!stock.regime||stock.regime.remaining<=0)stock.regime=regime(stock.symbol,random);
+     const r=stock.regime;r.remaining--;
+     const noise=(random()*2-1)*profiles[stock.symbol]*r.scale;
+     // Each company draws its own event, direction and size; no common market driver.
+     const shock=random()<.006?(random()<.5?-1:1)*(.01+random()*.025):0;
+     const change=Math.max(-.06,Math.min(.06,noise+r.drift+shock));
+     const before=stock.price;stock.price=bounded(before*(1+change));
      const ts=Math.floor(now/60000)*60;let c=stock.candles.at(-1);
      if(c.ts!==ts){c={ts,open:before,high:Math.max(before,stock.price),low:Math.min(before,stock.price),close:stock.price};stock.candles.push(c);stock.candles=stock.candles.slice(-90);}
      else{c.high=Math.max(c.high,stock.price);c.low=Math.min(c.low,stock.price);c.close=stock.price;}
@@ -71,6 +85,7 @@
    const symbols=companies.map(c=>c[0]),unique=a=>new Set(a).size===a.length;
    if(!unique(s.stocks.map(x=>x.symbol))||!unique(s.positions.map(x=>x.symbol))||!unique(s.watchlist)||!unique(s.orders.map(x=>x.id)))fail();
    for(const t of s.stocks){if(!symbols.includes(t.symbol)||!int(t.price,100,100000000)||!int(t.opening,100,100000000)||!int(t.volume)||!Array.isArray(t.candles)||t.candles.length<1||t.candles.length>90)fail();let prev=-1;for(const c of t.candles){if(!int(c.ts)||c.ts<=prev||!['open','high','low','close'].every(k=>int(c[k],1,100000100))||c.high<Math.max(c.open,c.close)||c.low>Math.min(c.open,c.close)||c.low>c.high)fail();prev=c.ts;}}
+   for(const t of s.stocks)if(t.regime!==undefined&&(!t.regime||!Number.isFinite(t.regime.drift)||Math.abs(t.regime.drift)>.002||!Number.isFinite(t.regime.scale)||t.regime.scale<.6||t.regime.scale>1.8||!int(t.regime.remaining,0,80)))fail();
    for(const p of s.positions)if(!symbols.includes(p.symbol)||!int(p.quantity,1)||!int(p.cost)||!Number.isSafeInteger(p.quantity*100000000))fail();
    for(const o of s.orders)if(!int(o.id,1)||o.id>=s.nextId||!symbols.includes(o.symbol)||!['buy','sell'].includes(o.side)||!['market','limit'].includes(o.kind)||!int(o.quantity,1,1000000)||!['open','filled','cancelled'].includes(o.status)||!int(o.created)||!(o.kind==='limit'?int(o.limit_price,100,100000000):o.limit_price===null)||(o.status==='open'&&o.kind!=='limit')||(o.status==='filled'&&(!int(o.fill_price,100,100000000)||!int(o.filled))))fail();
    if(s.orders.filter(o=>o.status==='open').length>100||s.watchlist.some(x=>!symbols.includes(x))||reserved(s,'buy')>s.user.cash||symbols.some(x=>reserved(s,'sell',x)>(s.positions.find(p=>p.symbol===x)?.quantity||0)))fail();
